@@ -724,7 +724,7 @@
 
         <div class="client-hours-section">
             <h3>
-                <span>📊 Total Hours per Client</span>
+                <span>📊 Total Client Session Hours</span>
                 <div class="period-filter">
                     <label style="font-size: 0.875rem; font-weight: 400;">Period:</label>
                     <select id="hours-period-filter" onchange="updateClientHoursList()">
@@ -737,6 +737,7 @@
                     </select>
                 </div>
             </h3>
+            <p style="font-size: 0.75rem; color: #6b7280; margin-bottom: 15px;">Only counting "Client Session" type (excludes meetings, follow-ups, and other)</p>
             <div class="client-hours-list" id="client-hours-list">
             </div>
         </div>
@@ -1056,6 +1057,9 @@
             if (dateRange) {
                 filteredSessions = sessions.filter(s => s.date >= dateRange.start && s.date <= dateRange.end);
             }
+            
+            // ONLY count "session" type (Client Sessions), not meetings/followups/other
+            filteredSessions = filteredSessions.filter(s => s.type === 'session');
             
             // Calculate total hours and monthly breakdown for each client
             filteredSessions.forEach(session => {
