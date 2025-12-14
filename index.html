@@ -527,6 +527,22 @@
             font-size: 1.25rem;
             font-weight: 600;
             margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .period-filter {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .period-filter select {
+            padding: 6px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 0.875rem;
         }
         
         .client-hours-list {
@@ -571,6 +587,23 @@
         .client-hours-sessions {
             font-size: 0.75rem;
             color: #6b7280;
+            margin-top: 2px;
+        }
+        
+        .monthly-breakdown {
+            font-size: 0.7rem;
+            color: #6b7280;
+            margin-top: 4px;
+            padding-top: 4px;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        .month-stat {
+            display: inline-block;
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-right: 4px;
             margin-top: 2px;
         }
         
@@ -690,7 +723,20 @@
         </div>
 
         <div class="client-hours-section">
-            <h3>📊 Total Hours per Client</h3>
+            <h3>
+                <span>📊 Total Hours per Client</span>
+                <div class="period-filter">
+                    <label style="font-size: 0.875rem; font-weight: 400;">Period:</label>
+                    <select id="hours-period-filter" onchange="updateClientHoursList()">
+                        <option value="lifetime">Lifetime</option>
+                        <option value="this-month" selected>This Month</option>
+                        <option value="last-month">Last Month</option>
+                        <option value="last-3-months">Last 3 Months</option>
+                        <option value="last-6-months">Last 6 Months</option>
+                        <option value="this-year">This Year</option>
+                    </select>
+                </div>
+            </h3>
             <div class="client-hours-list" id="client-hours-list">
             </div>
         </div>
@@ -963,11 +1009,56 @@
             }
         }
 
+        function getDateRangeForPeriod(period) {
+            const today = new Date();
+            let startDate, endDate;
+            
+            switch(period) {
+                case 'this-month':
+                    startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+                    endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+                    break;
+                case 'last-month':
+                    startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                    endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+                    break;
+                case 'last-3-months':
+                    startDate = new Date(today.getFullYear(), today.getMonth() - 3, 1);
+                    endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+                    break;
+                case 'last-6-months':
+                    startDate = new Date(today.getFullYear(), today.getMonth() - 6, 1);
+                    endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+                    break;
+                case 'this-year':
+                    startDate = new Date(today.getFullYear(), 0, 1);
+                    endDate = new Date(today.getFullYear(), 11, 31);
+                    break;
+                case 'lifetime':
+                default:
+                    return null; // No filter
+            }
+            
+            return {
+                start: startDate.toISOString().split('T')[0],
+                end: endDate.toISOString().split('T')[0]
+            };
+        }
+
         function calculateClientHours() {
+            const period = document.getElementById('hours-period-filter').value;
+            const dateRange = getDateRangeForPeriod(period);
+            
             const clientHours = {};
             
-            // Calculate total hours for each client
-            sessions.forEach(session => {
+            // Filter sessions by date range if applicable
+            let filteredSessions = sessions;
+            if (dateRange) {
+                filteredSessions = sessions.filter(s => s.date >= dateRange.start && s.date <= dateRange.end);
+            }
+            
+            // Calculate total hours and monthly breakdown for each client
+            filteredSessions.forEach(session => {
                 if (!clientHours[session.client]) {
                     // Get manager from clients database if available
                     const clientData = clients.find(c => c.name === session.client);
@@ -976,22 +1067,45 @@
                     clientHours[session.client] = {
                         totalMinutes: 0,
                         sessionCount: 0,
-                        manager: manager
+                        manager: manager,
+                        monthlyBreakdown: {}
                     };
                 }
+                
                 clientHours[session.client].totalMinutes += session.duration || 0;
                 clientHours[session.client].sessionCount += 1;
+                
+                // Track monthly breakdown
+                const sessionDate = new Date(session.date);
+                const monthKey = `${sessionDate.getFullYear()}-${String(sessionDate.getMonth() + 1).padStart(2, '0')}`;
+                
+                if (!clientHours[session.client].monthlyBreakdown[monthKey]) {
+                    clientHours[session.client].monthlyBreakdown[monthKey] = {
+                        minutes: 0,
+                        count: 0
+                    };
+                }
+                
+                clientHours[session.client].monthlyBreakdown[monthKey].minutes += session.duration || 0;
+                clientHours[session.client].monthlyBreakdown[monthKey].count += 1;
             });
             
             return clientHours;
         }
 
+        function formatMonthKey(monthKey) {
+            const [year, month] = monthKey.split('-');
+            const date = new Date(year, parseInt(month) - 1);
+            return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        }
+
         function updateClientHoursList() {
             const container = document.getElementById('client-hours-list');
             const clientHours = calculateClientHours();
+            const period = document.getElementById('hours-period-filter').value;
             
             if (Object.keys(clientHours).length === 0) {
-                container.innerHTML = '<div class="no-sessions">No sessions tracked yet</div>';
+                container.innerHTML = '<div class="no-sessions">No sessions tracked for this period</div>';
                 return;
             }
             
@@ -1004,12 +1118,27 @@
                 const minutes = data.totalMinutes % 60;
                 const hoursText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
                 
+                // Create monthly breakdown HTML
+                let monthlyBreakdownHtml = '';
+                if (period === 'lifetime' || period === 'last-3-months' || period === 'last-6-months' || period === 'this-year') {
+                    const sortedMonths = Object.entries(data.monthlyBreakdown).sort((a, b) => b[0].localeCompare(a[0]));
+                    monthlyBreakdownHtml = '<div class="monthly-breakdown">';
+                    sortedMonths.forEach(([monthKey, monthData]) => {
+                        const monthHours = Math.floor(monthData.minutes / 60);
+                        const monthMinutes = monthData.minutes % 60;
+                        const monthHoursText = monthHours > 0 ? `${monthHours}h ${monthMinutes}m` : `${monthMinutes}m`;
+                        monthlyBreakdownHtml += `<span class="month-stat">${formatMonthKey(monthKey)}: ${monthHoursText} (${monthData.count} session${monthData.count !== 1 ? 's' : ''})</span>`;
+                    });
+                    monthlyBreakdownHtml += '</div>';
+                }
+                
                 const item = document.createElement('div');
                 item.className = 'client-hours-item';
                 item.innerHTML = `
-                    <div>
+                    <div style="flex: 1;">
                         <div class="client-hours-name">${clientName}</div>
                         <div class="client-hours-manager">${data.manager}</div>
+                        ${monthlyBreakdownHtml}
                     </div>
                     <div style="text-align: right;">
                         <div class="client-hours-value">${hoursText}</div>
