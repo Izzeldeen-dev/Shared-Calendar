@@ -515,6 +515,65 @@
             font-weight: 700;
         }
         
+        .client-hours-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        
+        .client-hours-section h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        
+        .client-hours-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .client-hours-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            border-bottom: 1px solid #e5e7eb;
+            transition: background-color 0.2s;
+        }
+        
+        .client-hours-item:hover {
+            background-color: #f9fafb;
+        }
+        
+        .client-hours-item:last-child {
+            border-bottom: none;
+        }
+        
+        .client-hours-name {
+            font-weight: 500;
+            color: #111827;
+        }
+        
+        .client-hours-manager {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 2px;
+        }
+        
+        .client-hours-value {
+            font-weight: 700;
+            font-size: 1.25rem;
+            color: #3b82f6;
+        }
+        
+        .client-hours-sessions {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 2px;
+        }
+        
         .hidden {
             display: none;
         }
@@ -533,11 +592,15 @@
             <div class="form-grid">
                 <div class="form-group">
                     <label>Account Manager *</label>
-                    <input type="text" id="session-manager" placeholder="Enter account manager name">
+                    <select id="session-manager">
+                        <option value="">Select account manager</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label>Client Name *</label>
-                    <input type="text" id="session-client" placeholder="Enter client name">
+                    <select id="session-client">
+                        <option value="">Select client</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label>Date *</label>
@@ -626,6 +689,12 @@
             <button class="btn" onclick="openAddModal()">➕ Add Session</button>
         </div>
 
+        <div class="client-hours-section">
+            <h3>📊 Total Hours per Client</h3>
+            <div class="client-hours-list" id="client-hours-list">
+            </div>
+        </div>
+
         <div class="calendar-nav">
             <button class="btn btn-secondary" onclick="previousMonth()">← Previous</button>
             <h2 id="current-month"></h2>
@@ -696,16 +765,19 @@
 
         let database;
         let sessionsRef;
+        let clientsRef;
         
         try {
             firebase.initializeApp(firebaseConfig);
             database = firebase.database();
             sessionsRef = database.ref('sessions');
+            clientsRef = database.ref('clients');
         } catch (error) {
             console.error('Firebase initialization error:', error);
         }
 
         let sessions = [];
+        let clients = [];
         let currentDate = new Date();
         let currentEditingSessionId = null;
         let currentViewingSessionId = null;
@@ -831,8 +903,9 @@
                 document.getElementById('session-date').value = date;
             }
             
-            document.getElementById('session-manager').value = '';
-            document.getElementById('session-client').value = '';
+            // Reset form
+            populateManagerDropdown();
+            populateClientDropdown();
             document.getElementById('session-time').value = '10:00';
             document.getElementById('session-duration').value = '60';
             document.getElementById('session-type').value = 'session';
@@ -841,21 +914,137 @@
             document.getElementById('add-session-modal').style.display = 'block';
         }
 
+        function populateManagerDropdown() {
+            const select = document.getElementById('session-manager');
+            const currentValue = select.value;
+            
+            select.innerHTML = '<option value="">Select account manager</option>';
+            
+            // Get unique managers from clients
+            const managers = new Set();
+            clients.forEach(client => {
+                if (client.accountManager && client.accountManager.trim() !== '') {
+                    managers.add(client.accountManager.trim());
+                }
+            });
+            
+            Array.from(managers).sort().forEach(manager => {
+                const option = document.createElement('option');
+                option.value = manager;
+                option.textContent = manager;
+                select.appendChild(option);
+            });
+            
+            // Restore previous value if it exists
+            if (currentValue) {
+                select.value = currentValue;
+            }
+        }
+
+        function populateClientDropdown() {
+            const select = document.getElementById('session-client');
+            const currentValue = select.value;
+            
+            select.innerHTML = '<option value="">Select client</option>';
+            
+            // Get active clients only
+            const activeClients = clients.filter(c => !c.isOffboarded);
+            
+            activeClients.sort((a, b) => a.name.localeCompare(b.name)).forEach(client => {
+                const option = document.createElement('option');
+                option.value = client.name;
+                option.textContent = client.name;
+                select.appendChild(option);
+            });
+            
+            // Restore previous value if it exists
+            if (currentValue) {
+                select.value = currentValue;
+            }
+        }
+
+        function calculateClientHours() {
+            const clientHours = {};
+            
+            // Calculate total hours for each client
+            sessions.forEach(session => {
+                if (!clientHours[session.client]) {
+                    // Get manager from clients database if available
+                    const clientData = clients.find(c => c.name === session.client);
+                    const manager = clientData ? (clientData.accountManager || session.manager) : session.manager;
+                    
+                    clientHours[session.client] = {
+                        totalMinutes: 0,
+                        sessionCount: 0,
+                        manager: manager
+                    };
+                }
+                clientHours[session.client].totalMinutes += session.duration || 0;
+                clientHours[session.client].sessionCount += 1;
+            });
+            
+            return clientHours;
+        }
+
+        function updateClientHoursList() {
+            const container = document.getElementById('client-hours-list');
+            const clientHours = calculateClientHours();
+            
+            if (Object.keys(clientHours).length === 0) {
+                container.innerHTML = '<div class="no-sessions">No sessions tracked yet</div>';
+                return;
+            }
+            
+            // Sort by total hours (descending)
+            const sortedClients = Object.entries(clientHours).sort((a, b) => b[1].totalMinutes - a[1].totalMinutes);
+            
+            container.innerHTML = '';
+            sortedClients.forEach(([clientName, data]) => {
+                const hours = Math.floor(data.totalMinutes / 60);
+                const minutes = data.totalMinutes % 60;
+                const hoursText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                
+                const item = document.createElement('div');
+                item.className = 'client-hours-item';
+                item.innerHTML = `
+                    <div>
+                        <div class="client-hours-name">${clientName}</div>
+                        <div class="client-hours-manager">${data.manager}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="client-hours-value">${hoursText}</div>
+                        <div class="client-hours-sessions">${data.sessionCount} session${data.sessionCount !== 1 ? 's' : ''}</div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
         function closeAddModal() {
             document.getElementById('add-session-modal').style.display = 'none';
             currentEditingSessionId = null;
         }
 
         function saveSession() {
-            const manager = document.getElementById('session-manager').value.trim();
-            const client = document.getElementById('session-client').value.trim();
+            const manager = document.getElementById('session-manager').value;
+            const client = document.getElementById('session-client').value;
             const date = document.getElementById('session-date').value;
             const time = document.getElementById('session-time').value;
             const duration = parseInt(document.getElementById('session-duration').value);
             const type = document.getElementById('session-type').value;
             const brief = document.getElementById('session-brief').value.trim();
 
-            if (!manager || !client || !date || !time || !brief) {
+            if (!manager) {
+                alert('Please select an account manager');
+                return;
+            }
+            
+            if (!client) {
+                alert('Please select a client');
+                return;
+            }
+            
+            if (!date || !time || !brief) {
                 alert('Please fill in all required fields');
                 return;
             }
@@ -949,6 +1138,11 @@
             document.getElementById('modal-title').textContent = 'Edit Session';
             document.getElementById('save-session-btn').textContent = 'Update Session';
             
+            // Populate dropdowns first
+            populateManagerDropdown();
+            populateClientDropdown();
+            
+            // Then set values
             document.getElementById('session-manager').value = session.manager;
             document.getElementById('session-client').value = session.client;
             document.getElementById('session-date').value = session.date;
@@ -1024,6 +1218,8 @@
             const today = new Date().toISOString().split('T')[0];
             const todaySessions = filteredSessions.filter(s => s.date === today);
             document.getElementById('today-sessions').textContent = todaySessions.length;
+            
+            updateClientHoursList();
         }
 
         function getFilteredSessions() {
@@ -1046,12 +1242,18 @@
         }
 
         function updateFilters() {
+            // Get unique managers from clients database
             const managers = new Set();
-            const clients = new Set();
+            clients.forEach(client => {
+                if (client.accountManager && client.accountManager.trim() !== '') {
+                    managers.add(client.accountManager.trim());
+                }
+            });
 
+            // Get unique clients from sessions (to show all clients that have sessions)
+            const clientsInSessions = new Set();
             sessions.forEach(session => {
-                managers.add(session.manager);
-                clients.add(session.client);
+                clientsInSessions.add(session.client);
             });
 
             const managerFilter = document.getElementById('filter-manager');
@@ -1068,7 +1270,7 @@
             const clientFilter = document.getElementById('filter-client');
             const currentClient = clientFilter.value;
             clientFilter.innerHTML = '<option value="all">All Clients</option>';
-            Array.from(clients).sort().forEach(client => {
+            Array.from(clientsInSessions).sort().forEach(client => {
                 const option = document.createElement('option');
                 option.value = client;
                 option.textContent = client;
@@ -1112,6 +1314,16 @@
             renderCalendar();
             updateTodaySchedule();
             updateStats();
+        });
+
+        clientsRef.on('value', (snapshot) => {
+            clients = [];
+            snapshot.forEach((childSnapshot) => {
+                clients.push(childSnapshot.val());
+            });
+            
+            updateFilters();
+            updateClientHoursList();
         });
 
         const connectedRef = database.ref('.info/connected');
